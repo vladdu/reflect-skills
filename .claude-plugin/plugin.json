@@ -1,0 +1,10 @@
+{
+  "name": "reflect-skills",
+  "description": "Analyze Claude Code sessions and update skills with learnings from user corrections and successful patterns",
+  "version": "1.0.0",
+  "author": {
+    "name": "Vlad"
+  },
+  "repository": "https://github.com/vlad/reflect-skills",
+  "license": "MIT"
+}
