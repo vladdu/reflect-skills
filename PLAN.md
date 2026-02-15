@@ -2,270 +2,76 @@
 
 ## Context
 
-**Why this change is needed:**
+LLMs don't learn from user corrections across sessions. Every conversation starts from zero. You correct a button reference, a naming convention, an input validation pattern -- and next session, the same mistake happens again. "I just told you this yesterday."
 
-Current LLMs, including Claude, don't learn from user corrections across sessions. Every conversation starts from zero. Users repeatedly correct the same mistakes—for instance, correcting a specific button reference or coding pattern—but these corrections aren't retained. By the next session, the same mistakes reoccur, leading to frustration and wasted time.
+The fix: a **reflect skill** that analyzes sessions, extracts corrections and successful patterns, and updates skill files so the same mistakes don't repeat. Skills versioned in git so you can see how the system learns over time, roll back regressions, and track evolution.
 
-**The problem:**
-- No memory mechanism for user preferences and corrections
-- Skills don't improve from session learnings
-- Users repeat themselves across sessions
-- "I told you this yesterday" syndrome
-
-**The solution:**
-
-A **reflect skill** that analyzes Claude Code sessions, detects learnings from user corrections and successful patterns, and updates specified skill files with confidence-labeled improvements. This enables "correct once, never again" behavior through continuous skill improvement.
-
-**User requirements:**
-1. Manual `/reflect <skill-name>` command to trigger updates after a session
-2. Automatic mode that detects learnings at session end but requires approval
-3. Control commands: `reflect on`, `reflect off`, `reflect status`
-4. Confidence-based classification (high/medium/low)
-5. Review/approval UI showing detected signals and proposed changes
-6. Natural language editing of proposals before approval
-7. Git integration: auto-commit and push skill updates if ~/.claude/skills/ is a git repo
+**Goal:** Correct once, never again.
 
 ---
 
-## Recommended Approach
+## How It Works (from transcript)
 
-Create a new standalone **reflect** skill in `~/.claude/skills/reflect/` that follows existing skill patterns (humanizer, continuous-learning) and integrates with the Claude Code hook system.
+**Two modes:**
+1. **Manual:** User calls `/reflect` or `/reflect <skill-name>` after a session. Claude has full conversation context, analyzes it, proposes skill updates, user approves.
+2. **Automatic:** Stop hook fires at session end, checks if reflect is enabled, signals Claude to run the reflect flow. Same analysis + approval, just triggered automatically.
 
-### Architecture
+**Three controls:** `reflect on`, `reflect off`, `reflect status`
 
-**Modular design with focused responsibilities:**
+**Signal types:**
+- Corrections (user says "actually use X", "never do Y") = signals for new memories
+- Approvals (user confirms something worked) = confirmations of existing patterns
+
+**Confidence levels:**
+- **HIGH:** Direct user directives -- "never do X", "always use Y", explicit corrections
+- **MEDIUM:** Patterns that worked well -- successful approaches, approved solutions
+- **LOW:** Observations to review later -- emerging patterns, repeated behaviors
+
+**Approval flow:**
+1. Show detected signals
+2. Show proposed changes to skill file
+3. Show commit message
+4. User approves (Y), rejects (N), or edits with natural language
+5. Skill file updated, committed to git, pushed
+
+---
+
+## Key Design Principle
+
+**Claude does the analysis. Scripts are just triggers.**
+
+A Claude Code skill is instructions in SKILL.md that tell Claude how to behave. When `/reflect` is called, Claude already has the full conversation in context. It doesn't need a JavaScript module to parse transcripts with regex -- it can read the conversation directly and reason about what happened.
+
+The scripts exist only for:
+- Shell entry points (reflect.sh)
+- Hook triggers (stop-reflect.sh)
+- State management (on/off toggle -- a simple file read)
+
+Everything else -- analyzing signals, classifying confidence, formatting the approval UI, editing skill files, running git commands -- is Claude following SKILL.md instructions using its standard tools (Read, Write, Edit, Bash, AskUserQuestion).
+
+---
+
+## Architecture
 
 ```
 ~/.claude/skills/reflect/
-├── SKILL.md                      # Skill definition for Claude
-├── reflect.sh                    # Entry point (bash wrapper)
-├── config.json                   # Configuration options
-├── lib/
-│   ├── analyze-session.js       # Main orchestrator
-│   ├── confidence-classifier.js # Pattern detection with confidence levels
-│   ├── skill-parser.js          # SKILL.md parsing and updating
-│   ├── git-utils.js             # Git operations (add, commit, push)
-│   ├── approval-ui.js           # Interactive review workflow
-│   └── state-manager.js         # On/off toggle and history
-├── state/
-│   └── reflect-state.json       # State file (on/off, history)
-└── hooks/
-    └── stop-reflect.js          # Stop hook for automatic mode
+├── SKILL.md              # The brain -- all instructions for Claude
+├── scripts/
+│   ├── reflect.sh        # Entry point for /reflect command
+│   └── stop-reflect.sh   # Stop hook for automatic mode
+└── state/
+    └── reflect-state.json  # On/off toggle + history
 ```
 
-### Data Flow
-
-**Manual mode:** `/reflect <skill-name>`
-1. reflect.sh invokes lib/analyze-session.js with skill name
-2. Read transcript from CLAUDE_TRANSCRIPT_PATH env var
-3. confidence-classifier.js analyzes conversation and extracts learnings by confidence level
-4. approval-ui.js presents formatted review (signals → proposed changes → commit message)
-5. User approves, rejects, or edits with natural language
-6. skill-parser.js updates SKILL.md file
-7. git-utils.js commits and pushes (if ~/.claude/skills/ is git repo)
-
-**Automatic mode:** Stop hook trigger
-1. Session ends → Stop hook fires
-2. Check state/reflect-state.json (is reflect enabled?)
-3. If enabled: quick scan for learning signals (user corrections, error resolutions)
-4. If signals detected: show notification to Claude
-5. Require approval before proceeding with same flow as manual mode
-
-### Confidence Level Classification
-
-**HIGH confidence** - Direct user corrections:
-- "Actually, use X instead of Y"
-- "Not X, do Y"
-- "Never do X" or "Always do Y"
-- Explicit rejections with alternatives
-
-**MEDIUM confidence** - Successful patterns:
-- Error → Solution that worked
-- User approval after Claude's solution ("perfect", "works great")
-- Repeated successful approaches
-
-**LOW confidence** - Observations to review later:
-- Tools that worked well (high usage count)
-- Repeated questions (may indicate unclear instructions)
-- Emerging patterns worth noting
-
-### Git Integration
-
-**Strategy:** Required for skills directory (auto-commit if git repo exists)
-
-1. Check if `~/.claude/skills/` is a git repository
-2. If YES:
-   - Stage updated skill file: `git add <skill-file>`
-   - Commit with formatted message + Co-Authored-By line
-   - Push to remote (if configured)
-   - Handle errors gracefully: no remote = commit locally, network error = commit locally
-3. If NO: Just update skill file, skip git operations silently
-
-**Error handling:**
-- Not a git repo: Skip git, just update file
-- No remote configured: Commit locally, notify user
-- Network errors: Commit locally, suggest manual push
-- Merge conflicts: Abort and notify user
+That's it. No lib/ directory with 6 JS modules. The complexity lives in SKILL.md where it belongs.
 
 ---
 
-## Critical Files to Create
+## Critical Files
 
-### 1. **lib/confidence-classifier.js** (~300 lines)
+### 1. SKILL.md (~200-300 lines)
 
-**Purpose:** Core pattern detection logic
-
-**Key methods:**
-- `classifyLearnings(transcript, skillName)` - Returns `{ high: [], medium: [], low: [] }`
-- `detectUserCorrections(messages)` - Detects HIGH confidence signals
-  - Patterns: "actually", "instead", "not X do Y", "never", "always"
-- `detectSuccessPatterns(messages)` - Detects MEDIUM confidence signals
-  - Error → Solution sequences
-  - Approval indicators ("works", "perfect", "great")
-- `detectObservations(messages)` - Detects LOW confidence signals
-  - Tool usage patterns
-  - Repeated questions
-
-**References existing code:**
-- Parse JSONL transcript format (see evaluate-session.js:60)
-- Use regex matching for pattern detection
-
-### 2. **lib/analyze-session.js** (~200 lines)
-
-**Purpose:** Main orchestrator that coordinates the workflow
-
-**Key responsibilities:**
-- Read CLAUDE_TRANSCRIPT_PATH from environment
-- Load config from config.json
-- Invoke confidence-classifier to analyze session
-- Generate proposed changes (markdown diff format)
-- Generate commit message from learnings
-- Invoke approval-ui for review
-- Coordinate skill update and git operations
-- Record run in state manager
-
-**Follows pattern:** evaluate-session.js structure (lines 24-73)
-
-### 3. **lib/approval-ui.js** (~250 lines)
-
-**Purpose:** Interactive review workflow
-
-**Key methods:**
-- `presentApproval(analysis, skillName, proposedChanges, commitMessage)`
-  - Formats approval prompt with:
-    - Signals detected (organized by confidence level)
-    - Proposed changes (markdown diff)
-    - Commit message preview
-    - Approval options (Y/N/natural language edits)
-  - Outputs to stderr so Claude sees it (use `log()` from utils.js)
-- `processApprovalResponse(userResponse)` - Parse user input
-  - "Y"/"approve" → proceed
-  - "N"/"reject" → cancel
-  - Natural language → extract edit instructions
-- `parseNaturalLanguageEdits(userResponse)` - Extract edit operations
-  - "Remove the first change"
-  - "Reword commit message to..."
-  - "Only apply high confidence changes"
-
-### 4. **lib/skill-parser.js** (~200 lines)
-
-**Purpose:** Parse and update SKILL.md files
-
-**Key methods:**
-- `parseSkill(skillPath)` - Split frontmatter and body
-  - Handle YAML frontmatter (see humanizer/SKILL.md:1-18)
-  - Return structured data: `{ frontmatter, body, raw }`
-- `updateSkill(skillPath, learnings, analysis)`
-  - Append learnings to "## Learnings" section
-  - Organize by confidence level and timestamp
-  - Preserve existing structure
-- `writeSkill(skillPath, content)` - Write updated file
-
-**Format for learnings section:**
-```markdown
-## Learnings
-
-### HIGH - 2026-02-15
-
-- Always reference the primary CTA button component, not inline styles
-
-### MEDIUM - 2026-02-15
-
-- error_resolution: Fixed TypeScript strict null check by using optional chaining
-```
-
-### 5. **lib/git-utils.js** (~150 lines)
-
-**Purpose:** Git operations with error handling
-
-**Key methods:**
-- `isGitRepo()` - Check if directory is git repo (use utils.js pattern)
-- `getStatus()` - Get git status for modified files
-- `getDiff(skillFile)` - Show diff for skill file
-- `addFile(skillFile)` - Stage file: `git add`
-- `commit(message)` - Commit with formatted message + Co-Authored-By line
-- `push()` - Push to remote (detect branch, handle errors)
-- `commitAndPush(skillFile, commitMessage)` - Full workflow
-
-**Error handling:**
-- Try/catch around all git operations
-- Return `{ success: boolean, error?: string }` objects
-- Silent failures for non-critical operations
-
-**References:** utils.js:274-298 for git patterns
-
-### 6. **lib/state-manager.js** (~100 lines)
-
-**Purpose:** Manage on/off toggle and run history
-
-**State file structure:**
-```json
-{
-  "enabled": false,
-  "lastRun": null,
-  "config": {
-    "minSessionLength": 5,
-    "requireApproval": true,
-    "autoCommit": true,
-    "autoPush": true
-  },
-  "history": [
-    {
-      "timestamp": "2026-02-15T10:30:00Z",
-      "skill": "frontend-patterns",
-      "learnings": 3,
-      "approved": true
-    }
-  ]
-}
-```
-
-**Key methods:**
-- `readState()` / `writeState(state)`
-- `enable()` / `disable()` - Toggle automatic mode
-- `getStatus()` - Return current state + recent history
-- `recordRun(skillName, learnings, approved)` - Track runs
-
-### 7. **hooks/stop-reflect.js** (~80 lines)
-
-**Purpose:** Stop hook for automatic mode
-
-**Workflow:**
-1. Check if reflect is enabled (read state file)
-2. If disabled: exit silently
-3. Get CLAUDE_TRANSCRIPT_PATH from environment
-4. Count user messages (skip short sessions < 5 messages)
-5. Quick scan for learning signals:
-   - User corrections ("actually", "instead")
-   - Error resolutions
-6. If signals found: log notification to stderr
-7. Exit (Claude will see notification and can invoke approval workflow)
-
-**References:** evaluate-session.js pattern (lines 24-73)
-
-### 8. **SKILL.md** (~100 lines)
-
-**Purpose:** Skill definition for Claude
+This is the most important file. It tells Claude exactly how to run the reflect workflow.
 
 **Frontmatter:**
 ```yaml
@@ -274,77 +80,215 @@ name: reflect
 version: 1.0.0
 description: |
   Analyze Claude Code sessions and update specified skills with learnings
-  from user corrections and successful patterns. Supports manual invocation
-  and automatic mode with approval.
+  from user corrections and successful patterns. Supports manual /reflect
+  command and automatic mode via stop hook.
 allowed-tools:
   - Read
   - Write
   - Edit
   - Grep
+  - Glob
   - Bash
   - AskUserQuestion
 ---
 ```
 
-**Body sections:**
-- How to analyze sessions for learnings
-- Confidence level definitions
-- What makes a good learning vs. noise
-- How to present approval UI
-- When to update skills
+**Body must cover these sections:**
 
-**References:** continuous-learning/SKILL.md:1-81 for structure
+**A. Invocation modes**
+- `/reflect <skill-name>` -- analyze current session, update the named skill
+- `/reflect on` -- enable automatic mode (write state file)
+- `/reflect off` -- disable automatic mode (write state file)
+- `/reflect status` -- show current toggle state and recent history
 
-### 9. **reflect.sh** (~40 lines)
+**B. Session analysis instructions**
+- Scan the conversation for two types of signals:
+  - **Corrections:** User corrected Claude's behavior (e.g., "actually use X", "not that, do Y", "never generate X on your own")
+  - **Approvals/confirmations:** User confirmed something worked well ("perfect", "that's exactly right", "yes, always do it that way")
+- Classify each signal by confidence:
+  - HIGH: Explicit user directives, corrections with clear alternatives
+  - MEDIUM: Patterns that worked, confirmed approaches
+  - LOW: Observations, emerging patterns worth noting
 
-**Purpose:** Entry point for `/reflect` command
+**C. Skill update instructions**
+- Read the target skill's SKILL.md file
+- Determine what changes the learnings imply (new rules, refined instructions, additional examples)
+- Do NOT just append a changelog -- integrate learnings into the skill's actual instructions so Claude follows them naturally
+- Preserve the skill's existing structure and voice
 
-**Handles:**
-- `/reflect <skill-name>` → invoke analyze-session.js
-- `/reflect on` → enable automatic mode
-- `/reflect off` → disable automatic mode
-- `/reflect status` → show current status
+**D. Approval workflow**
+- Present to the user:
+  1. **Signals detected** -- list each signal with its confidence level and the conversation context it came from
+  2. **Proposed changes** -- show a before/after diff or describe the edits to the skill file
+  3. **Commit message** -- a concise summary of what changed and why
+- Wait for user response:
+  - "Y" or "approve" -- apply changes
+  - "N" or "reject" -- cancel, make no changes
+  - Any other text -- treat as natural language edits to the proposal, apply the edits, re-present for approval
+
+**E. Git integration**
+- After updating the skill file:
+  1. Check if the skills directory is a git repo: `git -C <skills-dir> rev-parse --git-dir`
+  2. If yes: stage the file, commit with message, push to remote
+  3. If no remote or push fails: commit locally, inform user
+  4. If not a git repo: skip git, just update the file
+- Commit message format: concise description of learnings applied
+- Always version skill changes so regressions can be rolled back
+
+**F. State file management**
+- State file location: `~/.claude/skills/reflect/state/reflect-state.json`
+- Structure:
+  ```json
+  {
+    "enabled": false,
+    "lastRun": "2026-02-15T10:30:00Z",
+    "history": [
+      {
+        "timestamp": "2026-02-15T10:30:00Z",
+        "skill": "frontend-patterns",
+        "signalsDetected": 3,
+        "approved": true
+      }
+    ]
+  }
+  ```
+- `reflect on` sets `enabled: true`
+- `reflect off` sets `enabled: false`
+- `reflect status` reads and displays state
+- After each successful reflect run, append to history
+
+### 2. scripts/reflect.sh (~30 lines)
+
+Simple bash entry point. Only handles the `on`/`off`/`status` subcommands by reading/writing the state file. For the actual `/reflect <skill-name>` flow, this script is not needed -- Claude invokes the skill directly and follows SKILL.md instructions.
 
 ```bash
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMMAND="${1:-}"
+STATE_DIR="${SCRIPT_DIR}/../state"
+STATE_FILE="${STATE_DIR}/reflect-state.json"
 
-case "$COMMAND" in
+mkdir -p "$STATE_DIR"
+
+case "${1:-}" in
   on)
-    node "${SCRIPT_DIR}/lib/state-manager.js" enable
+    # Create or update state file to enable
+    if [ -f "$STATE_FILE" ]; then
+      # Use node for JSON manipulation
+      node -e "
+        const fs = require('fs');
+        const state = JSON.parse(fs.readFileSync('$STATE_FILE', 'utf8'));
+        state.enabled = true;
+        fs.writeFileSync('$STATE_FILE', JSON.stringify(state, null, 2));
+      "
+    else
+      echo '{"enabled": true, "lastRun": null, "history": []}' > "$STATE_FILE"
+    fi
+    echo "Reflect automatic mode: ON"
     ;;
   off)
-    node "${SCRIPT_DIR}/lib/state-manager.js" disable
+    if [ -f "$STATE_FILE" ]; then
+      node -e "
+        const fs = require('fs');
+        const state = JSON.parse(fs.readFileSync('$STATE_FILE', 'utf8'));
+        state.enabled = false;
+        fs.writeFileSync('$STATE_FILE', JSON.stringify(state, null, 2));
+      "
+    else
+      echo '{"enabled": false, "lastRun": null, "history": []}' > "$STATE_FILE"
+    fi
+    echo "Reflect automatic mode: OFF"
     ;;
   status)
-    node "${SCRIPT_DIR}/lib/state-manager.js" status
+    if [ -f "$STATE_FILE" ]; then
+      cat "$STATE_FILE"
+    else
+      echo '{"enabled": false, "lastRun": null, "history": []}'
+    fi
     ;;
   *)
-    node "${SCRIPT_DIR}/lib/analyze-session.js" "$@"
+    # For /reflect <skill-name>, output a message for Claude to pick up
+    # Claude handles the actual analysis via SKILL.md instructions
+    echo "Reflect: analyzing session for skill '${1:-}'"
     ;;
 esac
 ```
 
-### 10. **config.json** (~20 lines)
+### 3. scripts/stop-reflect.sh (~40 lines)
 
-**Purpose:** Configuration options
+Stop hook script. Runs at session end. Checks if automatic mode is enabled. If so, signals Claude to run the reflect flow.
+
+```bash
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_FILE="${SCRIPT_DIR}/../state/reflect-state.json"
+
+# Check if reflect is enabled
+if [ ! -f "$STATE_FILE" ]; then
+  exit 0
+fi
+
+ENABLED=$(node -e "
+  const fs = require('fs');
+  try {
+    const state = JSON.parse(fs.readFileSync('$STATE_FILE', 'utf8'));
+    console.log(state.enabled ? 'true' : 'false');
+  } catch { console.log('false'); }
+")
+
+if [ "$ENABLED" != "true" ]; then
+  exit 0
+fi
+
+# Check transcript has enough messages
+TRANSCRIPT_PATH="${CLAUDE_TRANSCRIPT_PATH:-}"
+if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
+  exit 0
+fi
+
+MSG_COUNT=$(grep -c '"type":"user"' "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
+if [ "$MSG_COUNT" -lt 5 ]; then
+  exit 0
+fi
+
+# Signal to Claude that reflect should run
+>&2 echo "[Reflect] Session has ${MSG_COUNT} messages -- running automatic reflection"
+>&2 echo "[Reflect] Review and approve skill updates before they are applied"
+exit 0
+```
+
+### 4. state/reflect-state.json
+
+Initial state file:
 
 ```json
 {
-  "min_session_length": 5,
-  "require_approval": true,
-  "auto_commit": true,
-  "auto_push": true,
-  "confidence_thresholds": {
-    "high_min_signals": 1,
-    "medium_min_signals": 2,
-    "low_min_signals": 3
-  },
-  "ignore_patterns": [
-    "simple_typos",
-    "one_time_fixes"
-  ]
+  "enabled": false,
+  "lastRun": null,
+  "history": []
+}
+```
+
+---
+
+## Hook Configuration
+
+Add to `~/.claude/settings.json` to enable automatic mode:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/skills/reflect/scripts/stop-reflect.sh"
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
@@ -352,120 +296,56 @@ esac
 
 ## Implementation Sequence
 
-### Phase 1: Core Infrastructure
-1. Create directory structure: `~/.claude/skills/reflect/`
-2. Create config.json with default settings
-3. Create state-manager.js for on/off toggle
-4. Create reflect.sh entry point
-5. Test control commands: `reflect on`, `reflect off`, `reflect status`
+### Phase 1: SKILL.md
+Write the skill instructions. This is where all the intelligence lives. Cover:
+- Analysis methodology (what signals to look for, how to classify)
+- Approval workflow format
+- Skill update strategy (integrate, don't just append)
+- Git workflow
+- State management commands
 
-### Phase 2: Analysis Engine
-1. Create confidence-classifier.js with pattern detection
-2. Create skill-parser.js for SKILL.md parsing
-3. Create analyze-session.js orchestrator
-4. Test manual analysis on sample transcripts
+### Phase 2: Scripts + State
+1. Create directory structure
+2. Write reflect.sh (on/off/status)
+3. Write stop-reflect.sh (stop hook)
+4. Create initial reflect-state.json
+5. Make scripts executable
 
-### Phase 3: Approval Workflow
-1. Create approval-ui.js for interactive review
-2. Integrate with analyze-session.js
-3. Test approval flow with sample learnings
+### Phase 3: Hook Registration
+1. Add stop hook to ~/.claude/settings.json
+2. Test that hook fires on session end
+3. Test on/off toggle
 
-### Phase 4: Git Integration
-1. Create git-utils.js with git operations
-2. Integrate with analyze-session.js
-3. Test commit and push workflow
-4. Test error handling (no git, no remote, network errors)
-
-### Phase 5: Automatic Mode
-1. Create hooks/stop-reflect.js
-2. Add hook configuration to ~/.claude/settings.json
-3. Test automatic detection and notification
-4. Test full workflow from session end to approval
-
-### Phase 6: SKILL.md and Documentation
-1. Create SKILL.md with instructions for Claude
-2. Document usage patterns and examples
-3. Add README with installation instructions
+### Phase 4: End-to-End Testing
+1. Run a session, make some corrections
+2. Call `/reflect <skill-name>`
+3. Verify approval UI appears correctly
+4. Approve, verify skill file updated
+5. Verify git commit created (if applicable)
+6. Test automatic mode end-to-end
 
 ---
 
-## Verification Plan
+## Verification
 
-### Manual Testing
-
-1. **Control commands:**
-   ```bash
-   /reflect status  # Should show disabled initially
-   /reflect on      # Enable automatic mode
-   /reflect status  # Should show enabled
-   /reflect off     # Disable automatic mode
-   ```
-
-2. **Manual reflection:**
-   - Start a session and correct Claude on something (e.g., "Actually, use PrimaryButton not Button")
-   - Run `/reflect <skill-name>`
-   - Verify approval UI shows detected correction
-   - Approve changes
-   - Verify SKILL.md was updated
-   - Verify git commit was created (if ~/.claude/skills/ is git repo)
-
-3. **Automatic mode:**
-   - Enable with `/reflect on`
-   - Have a session with corrections
-   - End session
-   - Verify notification appears about detected learnings
-   - Verify approval is required before changes
-
-4. **Confidence classification:**
-   - Test HIGH: Direct user corrections ("never do X", "always use Y")
-   - Test MEDIUM: Error → solution patterns
-   - Test LOW: Repeated tool usage observations
-   - Verify learnings are categorized correctly
-
-5. **Git integration:**
-   - Test with git repo: verify commit and push
-   - Test without git repo: verify updates still work
-   - Test with no remote: verify commit locally
-   - Test with network error: verify graceful handling
-
-6. **Natural language editing:**
-   - Get approval UI with multiple changes
-   - Edit with "Remove the first high confidence change"
-   - Verify changes are modified correctly
-   - Approve modified proposal
-   - Verify only edited changes are applied
-
-### Edge Cases
-
-1. Short sessions (< 5 messages) should be skipped
-2. Sessions with no learnings should not trigger approval
-3. Invalid skill names should show helpful error
-4. Malformed SKILL.md files should error gracefully
-5. Git conflicts should abort with clear message
-
-### Success Criteria
-
-- ✅ Manual `/reflect <skill-name>` command works end-to-end
-- ✅ Control commands (on/off/status) work correctly
-- ✅ Confidence classification detects HIGH/MEDIUM/LOW patterns
-- ✅ Approval UI shows clear, actionable information
-- ✅ Natural language editing modifies proposals correctly
-- ✅ SKILL.md files are updated with proper formatting
-- ✅ Git integration commits and pushes successfully (when git repo exists)
-- ✅ Automatic mode detects learnings at session end
-- ✅ Automatic mode requires approval before updating
-- ✅ Error handling is robust and user-friendly
+1. `/reflect status` shows disabled initially
+2. `/reflect on` enables, `/reflect off` disables
+3. `/reflect <skill-name>` after corrections shows approval with detected signals
+4. Approving updates the target skill's SKILL.md with integrated learnings
+5. Git commit is created if skills directory is a git repo
+6. Stop hook triggers automatic reflection at session end when enabled
+7. Automatic mode still requires approval before changing anything
+8. Natural language edits to proposals work (e.g., "only apply the high confidence ones")
 
 ---
 
-## Notes
+## What Changed from Previous Plan
 
-- **Reuse existing utilities:** The `utils.js` file at `/home/vlad/.claude/plugins/marketplaces/everything-claude-code/scripts/lib/utils.js` provides many helpful functions (readFile, writeFile, log, isGitRepo, etc.). Require and use these where applicable.
+The previous plan had 6 JavaScript modules (confidence-classifier.js, approval-ui.js, skill-parser.js, git-utils.js, analyze-session.js, state-manager.js) totaling ~1300 lines of code. This was over-engineered because:
 
-- **Follow existing patterns:** The continuous-learning skill provides a good template for hook integration and session analysis. The humanizer skill shows proper SKILL.md formatting.
+1. **Claude does the analysis natively.** It reads the conversation, classifies signals, generates proposals. No need for regex-based JavaScript classifiers.
+2. **Claude handles the approval UI.** It formats the output and processes user responses. No need for a Node.js approval-ui module.
+3. **Claude edits skill files directly.** Using Read/Write/Edit tools. No need for a JavaScript skill-parser.
+4. **Claude runs git commands.** Using Bash tool. No need for a JavaScript git-utils wrapper.
 
-- **Keep it simple initially:** Start with basic pattern detection and approval. More sophisticated NLP for learning extraction can be added later.
-
-- **Version control is optional:** Git integration should enhance the workflow but not be required. The skill should work perfectly fine without git.
-
-- **User control is paramount:** Automatic mode should ALWAYS require approval. Never update skills without user consent.
+The new plan: 1 SKILL.md file (the brain), 2 shell scripts (triggers), 1 state file. Total ~300-400 lines including SKILL.md. Same functionality, fraction of the complexity.
