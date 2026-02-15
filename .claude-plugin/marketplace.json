@@ -1,0 +1,13 @@
+{
+  "name": "reflect-skills",
+  "owner": {
+    "name": "Vlad"
+  },
+  "plugins": [
+    {
+      "name": "reflect-skills",
+      "source": ".",
+      "description": "Analyze Claude Code sessions and update skills with learnings from user corrections and successful patterns"
+    }
+  ]
+}
