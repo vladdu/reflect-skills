@@ -1,0 +1,140 @@
+Introduction to Self-Improving Skills in Claude Code In this video, I'm going to
+be showing you how to set up self-improving skills within cloud code. Now, one
+of the The Problem with Current LLMs issues with LLMs right now is they don't
+actually learn from us. Just to run through an example of this, let's say you're
+working on a web application. There might be a mistake that the coding harness
+or the model that you're using makes within the first iteration of what it's
+trying to do. Let's say you want to add a new feature and then it has a button
+as a part of that feature. Just a simple but relatively common mistake could be
+that an LLM doesn't actually know the particular button that you might want to
+leverage. Generally speaking, you can tell from certain inputs and buttons what
+is actually generated from an LLM. Now, you might correct that mistake and say,
+"Okay, I actually want you to reference this button." But the issue with this is
+when you actually correct it within that session, when you pick up in a second
+session, it's going to make that same mistake again. And you're going to have to
+correct it or remember to actually specify to reference that particular button.
+Same thing for the next session. And this loop will continue. Every conversation
+effectively starts from zero. And the thing with this problem is it touches
+every single model that is out there as well as every single coding harness. Not
+having a good effective memory mechanism within the harness in my opinion can
+definitely lead to a lot of different frustrations. Now this frustration can
+come up in a number of different ways. It might not follow naming conventions.
+Use the proper logging convention. It might not validate inputs the proper way
+that you did within other components. Had that experience where you're just
+thinking, I just told you this yesterday or I told you this last week. The issue
+with this is there's no memory. your preferences aren't persisted and
+effectively without some form of memory is you're going to be repeating yourself
+forever. The solution to this is relatively simple. We can actually set up a
+reflex skill to analyze the session, extract corrections and update the skill
+file. One thing that I've been playing around with is for my global skills that
+I use across my machine is I have all of those different skills versioned on
+GitHub as I have them reflect and iterate on those particular skills. I can see
+all of those different memories over time and if there are regressions and if I
+want to roll it back, it makes it easy to have it all within the version control
+within git. So now the way that I've set this up is there's a few different
+mechanisms to this and it's relatively simple. I have the ability to turn
+reflect on, reflect off, and then reflect status. There's two different ways
+that we can do this. There's a manual way, and then there's also an automatic
+way. First, let's touch on the Manual Skill Reflection manual flow. There's a
+skill called reflect, and then there's a slash command. As soon as you go
+through a conversation and if there's something that you want to have it
+remember, you can simply call that slash command and it will have the context of
+the conversation and then it will reference the particular skills and then it
+can go and update those accordingly. And the nice thing with the manual update
+is you're going to have a lot more control in terms of what is actually being
+updated within the skill file. Just to go through a hypothetical example, so you
+might leverage the skill, it might say here's my review of the O module and you
+might realize, oh, it's actually not looking for SQL injections. we could go and
+specify always check for SQL injections and then from there cloud will go in the
+current session check for SQL injections similar to the button example that I
+had and then ideally it will come back and show you that it's done and the
+really nice thing with this is corrections are all signals that could be good
+memories approvals are further confirmations and the reflect command and skill
+will extract both of these and then after that process all that we need to do is
+actually run the command to reflect we have two different ways that we can do
+this we can run the reflect command And or we can also explicitly pass in the
+skill name as well. But if you just pass in reflect, it will have the contextual
+awareness since it is within that thread to know when that skill was actually
+invoked. Effectively, Claude will analyze and scan the conversation for
+corrections. It will identify success patterns, post skill updates, and the way
+that this is set up is it will give you a breakdown of different confidence
+levels. There will be high, medium, as well as low. If I say never do X, like
+never come up with a button style on your own within this project, you can go
+ahead and specify something like that. Medium are going to be patterns that
+worked well. And low are going to be observations to review later. And all of
+this works is just through this skill file. You're going to be able to edit
+this, tweak it if you want to have version control, or if you don't, you can go
+ahead add in a G integration. Additionally, you can just remove that if you
+don't want to leverage it. I'll link all of this within the description of the
+video before it actually updates through respective skill. This is what the
+review and approval process looks like. We have the signals that were detected.
+We have the proposed changes. And then we have the commit message that it's
+going to add if we go and accept those. Additionally, what we can do within here
+is we can just change and we can change with natural language. That's one of the
+really nice things with this in terms of actually applying these to our skills
+directory as well as pushing them to get. We can either click Y and or we can
+type with natural language the different changes that we want to have within
+Cloud Code. And then once you've either made those changes or you've accepted
+what Claude has proposed, it's going to edit the particular skill and then it's
+going to go ahead and commit that within Git. And then it's going to go ahead
+and push that up. And one thing about this process that I did want to have
+within at least my setup is for all of those different changes that it makes
+within the skill, make sure you're actually versioning all of those as Next up,
+you Automating Skill Reflection can actually take the same flow and you can
+automate it. You can have hooks trigger reflections automatically. Now, if you
+haven't used hooks before, effectively what they are commands that run on
+different events. Now, there is a stop hook, and this is something that I
+covered in an earlier video on the Ralph Wigums loop where what you can do is to
+have Claude persist and run automatically. You can actually bind a shell script
+to invoke and have Claude continue whenever that stop hook is run. But it can
+also be perfect for end of session analysis just like this. Now the syntax is
+broken within this example here, but effectively what this is going to do is on
+the stop hook, we're going to go and trigger that shell script to reflect. If
+you are going to be running this automatically, you do want to have a lot of
+confidence in terms of that reflect mechanism and what it's actually doing. But
+what it will do is you will go through the process just like before. And then
+once the session ends, the hook is going to analyze and automatically update all
+of those different learnings. This is going to be that continual self-improving
+loop that you can have within cloud code. You can very well also leverage the
+same strategy of continual learning within other agentic systems as well. And so
+what it will do is in that button example, it will go ahead, it will learn from
+the session. Then what it will look like within cloud code is we'll see learn
+from session and it will have the skill that it updated. So it's effectively
+more of a silent notification, but just like this indication like you see on the
+screen here that it actually updated that particular skill. And then in terms of
+the reflect shell script that gets invoked on the stop hook, we can turn it on.
+There's a mechanism to reflect on, reflect off, and this is effectively going to
+work the same way as the reflect pattern that we had, though just being
+automatic. The one thing that I Benefits and Conclusion find exciting about this
+is you can leverage skills for a ton of different things. This can be for code
+review, API design, testing, documentation, amongst a ton of other use cases.
+And having skills actually be able to learn from your conversation, I think, can
+be something that is pretty powerful. and also having it within skills. You
+don't have to worry about embeddings and memory and all of the complexity that
+comes with typical memory systems that we see out there. This is going to all be
+within a markdown file that you can simply read with natural language. And now
+the other thing that I like about this is actually having it within git cuz you
+can see how the system learns over time. If you have a front-end skill, you can
+see all of the different things that are learned as it goes through instead of
+actually having to start from blank every single time. But I think the more
+interesting aspect of this is you can see how those skills evolve over time and
+how your system gets smarter over time as you have conversations with it. You're
+going to be able to see all of the different learnings for the particular skills
+if you are to leverage this within Git as well. And just to wrap up, if you
+aren't as familiar with agent skills, I'll put a couple links within the
+description of the video. I'll also do some other videos probably over the
+course of the month on this type of topic as well. So feel free to subscribe if
+you're interested in this type of content. Okay. Okay, last but not least, just
+to sum up what we've touched on, there's a couple different ways to do this. You
+can do it through the autodetect method, you can do it through the manual
+method, or you can toggle on and off and do a little bit of both. If you do want
+to leverage the auto detect method, see how it works for a little bit. You can
+try that. Additionally, I'd encourage you just get familiar with the actual
+reflect mechanism. I'll put a link to the working copy of the one that I'm
+leveraging within the description of the video if you're interested. And then we
+also have the toggle mechanism. So, if you want to use a combination of manual
+as well as automatic, you have to turn on that auto detect mechanism when it's
+triggered within the hook. Okay. So, all in all, the goal with this is to
+correct once and then never again. This is a start. I'm not saying this is
+definitely the end solution, but hopefully it inspires some ideas in terms of
+how you can leverage skills, self-improvement, as well as continual learning.
